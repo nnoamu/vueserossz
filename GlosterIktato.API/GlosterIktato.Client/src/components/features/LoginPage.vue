@@ -31,9 +31,6 @@
 					Sign in
 				</BaseButton>
 			</form>
-			<p class="mt-3 text-xs text-gray-500">
-				This is a mock login. Proper authentication should be implemented with the backend.
-			</p>
 		</div>
 	</div>
 </template>
