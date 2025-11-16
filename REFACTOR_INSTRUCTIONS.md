@@ -3,6 +3,17 @@
 ## Áttekintés
 A develop-baranysz branch frontend kódjában több strukturális probléma van, amelyek a kód karbantarthatóságát és újrafelhasználhatóságát csökkentik. Ez a dokumentum részletes utasításokat tartalmaz a refaktoráláshoz.
 
+## Összefoglaló - Azonosított problémák
+
+1. **Dátum formázó függvények** - 6+ komponensben ismétlődnek (formatDate, formatTime, stb.)
+2. **FontAwesome importok** - 10+ komponensben feleslegesen importálva van, pedig globálisan elérhető
+3. **Interface-ek és típusok** - DTO-k és modellek komponensekben vannak, kellene centralizálni
+4. **Document/Action utility függvények** - getDocumentTypeBadgeClass, getActionLabel stb. ismétlődnek
+5. **Clipboard utility** - copyToClipboard függvény csak 1 helyen van, de máshol is hasznos lenne
+6. **Konstansok** - currencyOptions és más konstansok hardcoded vannak
+7. **Pagination logic** - komplex visiblePages logika egy komponensben van
+8. **Loading state** - sok ismétlődő loading state kezelés
+
 ## Azonosított problémák és megoldások
 
 ### 1. Dátum formázó függvények kiszervezése
@@ -387,10 +398,401 @@ export interface SupplierListItemDto {
 
 ---
 
+### 4. Document Type és Action utility függvények centralizálása
+
+**Probléma:**
+- A `getDocumentTypeBadgeClass()` függvény legalább 2 komponensben ismétlődik
+- A `getActionLabel()`, `getActionIcon()`, `getActionBadgeClass()` függvények a HistoryTimeline komponensben vannak, de máshol is hasznosak lennének
+- Ezek a függvények domain-specifikus logikát tartalmaznak, amelyet érdemes centralizálni
+- Érintett fájlok:
+  - `src/components/features/DocumentDetailPage.vue`: `getDocumentTypeBadgeClass()`
+  - `src/components/features/RelatedDocumentsList.vue`: `getDocumentTypeBadgeClass()`
+  - `src/components/features/HistoryTimeline.vue`: `getActionLabel()`, `getActionIcon()`, `getActionBadgeClass()`
+
+**Megoldás:**
+
+**A) Bővítsd ki a document.types.ts fájlt:**
+
+Adj hozzá a következő utility függvényeket a `src/types/document.types.ts`-hez (a már meglévő `getStatusColor`, `getStatusDisplayName`, `getStatusIcon` függvények mellé):
+
+```typescript
+/**
+ * Get badge color classes for document type
+ * @param code - Document type code
+ * @returns TailwindCSS color class string
+ */
+export function getDocumentTypeBadgeClass(code: string): string {
+  switch (code) {
+    case 'SZLA': return 'bg-blue-100 text-blue-800';
+    case 'TIG': return 'bg-green-100 text-green-800';
+    case 'SZ': return 'bg-purple-100 text-purple-800';
+    default: return 'bg-gray-100 text-gray-800';
+  }
+}
+
+/**
+ * Get Hungarian label for document history action
+ * @param action - Action code
+ * @returns Hungarian translation of the action
+ */
+export function getActionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    'Created': 'Létrehozva',
+    'Updated': 'Módosítva',
+    'StatusChanged': 'Státusz változás',
+    'CommentAdded': 'Megjegyzés hozzáadva',
+    'Forwarded': 'Továbbküldve',
+    'Returned': 'Visszaküldve',
+    'Rejected': 'Elutasítva',
+    'Finalized': 'Lezárva',
+    'Assigned': 'Hozzárendelve',
+    'Delegated': 'Átadva',
+  };
+  return labels[action] || action;
+}
+
+/**
+ * Get icon for document history action
+ * @param action - Action code
+ * @returns FontAwesome icon definition array [prefix, iconName]
+ */
+export function getActionIcon(action: string): [string, string] {
+  const icons: Record<string, [string, string]> = {
+    'Created': ['fas', 'plus'],
+    'Updated': ['fas', 'edit'],
+    'StatusChanged': ['fas', 'arrows-rotate'],
+    'CommentAdded': ['fas', 'comment'],
+    'Forwarded': ['fas', 'arrow-right'],
+    'Returned': ['fas', 'arrow-left'],
+    'Rejected': ['fas', 'times-circle'],
+    'Finalized': ['fas', 'check-circle'],
+    'Assigned': ['fas', 'user'],
+    'Delegated': ['fas', 'user-plus'],
+  };
+  return icons[action] || ['fas', 'circle'];
+}
+
+/**
+ * Get badge color classes for document history action
+ * @param action - Action code
+ * @returns TailwindCSS color class string
+ */
+export function getActionBadgeClass(action: string): string {
+  switch (action) {
+    case 'Created': return 'bg-green-500';
+    case 'Updated': return 'bg-blue-500';
+    case 'StatusChanged': return 'bg-indigo-500';
+    case 'CommentAdded': return 'bg-purple-500';
+    case 'Forwarded': return 'bg-cyan-500';
+    case 'Returned': return 'bg-orange-500';
+    case 'Rejected': return 'bg-red-500';
+    case 'Finalized': return 'bg-emerald-500';
+    case 'Assigned': return 'bg-blue-600';
+    case 'Delegated': return 'bg-teal-500';
+    default: return 'bg-gray-500';
+  }
+}
+```
+
+**Refactoring lépések:**
+1. Add hozzá a fenti függvényeket a `document.types.ts` végéhez
+2. Minden komponensben, ahol ezek a függvények lokálisan vannak definiálva:
+   - Töröld a helyi függvény definíciót
+   - Importáld a centralizált függvényt: `import { getDocumentTypeBadgeClass, getActionLabel, getActionIcon, getActionBadgeClass } from '@/types/document.types'`
+3. Ellenőrizd, hogy a függvények ugyanúgy működnek
+
+---
+
+### 5. Clipboard utility függvény létrehozása
+
+**Probléma:**
+- A `copyToClipboard()` függvény jelenleg csak a DocumentDetailPage-ben van, de hasznos lenne más komponensekben is
+- Ez egy gyakori funkció, amit érdemes centralizálni
+- Érintett fájl:
+  - `src/components/features/DocumentDetailPage.vue` (1155. sor)
+
+**Megoldás:**
+
+Hozz létre egy `src/utils/clipboard.utils.ts` fájlt:
+
+```typescript
+import { useToast } from '@/composables/useToast';
+
+/**
+ * Copy text to clipboard with toast notification
+ * @param text - Text to copy to clipboard
+ * @param successMessage - Optional success message (default: "Másolva a vágólapra")
+ * @param errorMessage - Optional error message (default: "Nem sikerült másolni")
+ */
+export async function copyToClipboard(
+  text: string,
+  successMessage = 'Másolva a vágólapra',
+  errorMessage = 'Nem sikerült másolni'
+): Promise<void> {
+  const { success, error } = useToast();
+
+  try {
+    await navigator.clipboard.writeText(text);
+    success(successMessage);
+  } catch (err) {
+    error(errorMessage);
+  }
+}
+```
+
+**Refactoring lépések:**
+1. Hozd létre a `src/utils/clipboard.utils.ts` fájlt a fenti tartalommal
+2. A DocumentDetailPage-ben:
+   - Töröld a helyi `copyToClipboard()` függvényt
+   - Importáld: `import { copyToClipboard } from '@/utils/clipboard.utils'`
+3. Ha más komponensekben is szükséges clipboard funkció, használd ezt a utility függvényt
+
+---
+
+### 6. Konstansok centralizálása
+
+**Probléma:**
+- A `currencyOptions` és más konstansok hardcoded módon vannak a komponensekben
+- Ezeket a konstansokat érdemes lenne egy központi helyre tenni
+- Érintett fájl:
+  - `src/components/features/DocumentDetailPage.vue`: `currencyOptions`
+
+**Megoldás:**
+
+Hozz létre egy `src/constants/app.constants.ts` fájlt:
+
+```typescript
+/**
+ * Application-wide constants
+ */
+
+/**
+ * Currency options for select dropdowns
+ */
+export const CURRENCY_OPTIONS = [
+  { label: 'HUF', value: 'HUF' },
+  { label: 'EUR', value: 'EUR' },
+  { label: 'USD', value: 'USD' },
+] as const;
+
+/**
+ * Supported currency codes
+ */
+export type CurrencyCode = typeof CURRENCY_OPTIONS[number]['value'];
+
+/**
+ * Document type codes
+ */
+export const DOCUMENT_TYPE_CODES = {
+  INVOICE: 'SZLA',
+  CONTRACT: 'SZ',
+  REQUEST: 'TIG',
+} as const;
+
+/**
+ * Pagination defaults
+ */
+export const PAGINATION_DEFAULTS = {
+  PAGE_SIZE: 20,
+  MAX_VISIBLE_PAGES: 7,
+} as const;
+```
+
+**Refactoring lépések:**
+1. Hozd létre a `src/constants/app.constants.ts` fájlt
+2. Minden komponensben, ahol ezek a konstansok hardcoded vannak:
+   - Töröld a helyi konstans definíciót
+   - Importáld: `import { CURRENCY_OPTIONS, DOCUMENT_TYPE_CODES } from '@/constants/app.constants'`
+3. Cseréld le a hardcoded értékeket az importált konstansokra
+
+---
+
+### 7. Pagination logic composable-be helyezése
+
+**Probléma:**
+- A `visiblePages` computed property komplex logikát tartalmaz az oldalszámok megjelenítéséhez
+- Ez a logika ismétlődhet más komponensekben is, ahol pagination van
+- Jelenleg csak a DocumentsListPage-ben van, de előfordulhat máshol is
+- Érintett fájl:
+  - `src/components/features/DocumentsListPage.vue` (193-234. sor)
+
+**Megoldás:**
+
+Hozz létre egy `src/composables/usePagination.ts` fájlt:
+
+```typescript
+import { computed, type Ref } from 'vue';
+import type { PaginatedResult } from '@/types/document.types';
+import { PAGINATION_DEFAULTS } from '@/constants/app.constants';
+
+/**
+ * Composable for pagination logic
+ */
+export function usePagination<T>(paginationData: Ref<PaginatedResult<T> | null>) {
+  /**
+   * Calculate visible page numbers for pagination UI
+   * Shows ellipsis (...) when there are many pages
+   */
+  const visiblePages = computed(() => {
+    if (!paginationData.value) return [];
+
+    const total = paginationData.value.totalPages;
+    const current = paginationData.value.page;
+    const pages: (number | string)[] = [];
+    const maxVisible = PAGINATION_DEFAULTS.MAX_VISIBLE_PAGES;
+
+    if (total <= maxVisible) {
+      // Show all pages if 7 or fewer
+      for (let i = 1; i <= total; i++) {
+        pages.push(i);
+      }
+    } else {
+      // Always show first page
+      pages.push(1);
+
+      if (current <= 4) {
+        // Near the start
+        for (let i = 2; i <= 5; i++) {
+          pages.push(i);
+        }
+        pages.push('...');
+        pages.push(total);
+      } else if (current >= total - 3) {
+        // Near the end
+        pages.push('...');
+        for (let i = total - 4; i <= total; i++) {
+          pages.push(i);
+        }
+      } else {
+        // In the middle
+        pages.push('...');
+        for (let i = current - 1; i <= current + 1; i++) {
+          pages.push(i);
+        }
+        pages.push('...');
+        pages.push(total);
+      }
+    }
+
+    return pages;
+  });
+
+  /**
+   * Check if there's a previous page
+   */
+  const hasPrevious = computed(() => {
+    return paginationData.value && paginationData.value.page > 1;
+  });
+
+  /**
+   * Check if there's a next page
+   */
+  const hasNext = computed(() => {
+    return paginationData.value && paginationData.value.page < paginationData.value.totalPages;
+  });
+
+  return {
+    visiblePages,
+    hasPrevious,
+    hasNext,
+  };
+}
+```
+
+**Refactoring lépések:**
+1. Hozd létre a `src/composables/usePagination.ts` fájlt
+2. A DocumentsListPage-ben:
+   - Importáld: `import { usePagination } from '@/composables/usePagination'`
+   - Használd a composable-t: `const { visiblePages, hasPrevious, hasNext } = usePagination(pagination)`
+   - Töröld a helyi `visiblePages` computed property-t
+3. Ha máshol is van pagination, használd ezt a composable-t
+
+---
+
+### 8. Loading state composable létrehozása (opcionális)
+
+**Probléma:**
+- Sok komponensben van `loading`, `isLoading`, `loadingUsers`, `loadingBcData` stb. state
+- Ezek kezelése ismétlődő kód
+- Érintett fájlok: szinte minden feature komponens
+
+**Megoldás:**
+
+Hozz létre egy `src/composables/useLoading.ts` fájlt:
+
+```typescript
+import { ref } from 'vue';
+
+/**
+ * Composable for managing loading states
+ */
+export function useLoading(initialState = false) {
+  const isLoading = ref(initialState);
+
+  /**
+   * Set loading state to true
+   */
+  function startLoading() {
+    isLoading.value = true;
+  }
+
+  /**
+   * Set loading state to false
+   */
+  function stopLoading() {
+    isLoading.value = false;
+  }
+
+  /**
+   * Execute an async function with automatic loading state management
+   * @param fn - Async function to execute
+   * @returns Result of the async function
+   */
+  async function withLoading<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      startLoading();
+      return await fn();
+    } finally {
+      stopLoading();
+    }
+  }
+
+  return {
+    isLoading,
+    startLoading,
+    stopLoading,
+    withLoading,
+  };
+}
+```
+
+**Használat példa:**
+```typescript
+const { isLoading, withLoading } = useLoading();
+
+async function loadData() {
+  await withLoading(async () => {
+    // Your async operation here
+    const data = await api.get('/data');
+    // ...
+  });
+}
+```
+
+**Refactoring lépések (opcionális):**
+1. Hozd létre a `src/composables/useLoading.ts` fájlt
+2. Komponensekben, ahol egyszerű loading state van:
+   - Cseréld le a `ref(false)` loading state-et a `useLoading()` composable-re
+   - Használd a `withLoading()` függvényt az async műveleteknél
+3. Ez egy opcionális refactoring, csak ott alkalmazzuk, ahol egyszerűsíti a kódot
+
+---
+
 ## Ellenőrző lista (Checklist)
 
 Miután végigmentél a refaktoráláson, ellenőrizd:
 
+### Alapvető refactoring (kötelező):
 - [ ] Létrehoztad a `src/utils/date.utils.ts` fájlt
 - [ ] Minden dátum formázás a centralizált utility függvényeket használja
 - [ ] Eltávolítottad a `FontAwesomeIcon` felesleges importjait a komponensekből
@@ -399,10 +801,22 @@ Miután végigmentél a refaktoráláson, ellenőrizd:
 - [ ] Létrehoztad a `user.types.ts` fájlt
 - [ ] Létrehoztad a `supplier.types.ts` fájlt
 - [ ] Minden komponens a központi types fájlokat használja
+
+### További refactoring (ajánlott):
+- [ ] Bővítetted a `document.types.ts` fájlt a utility függvényekkel (getDocumentTypeBadgeClass, getActionLabel, stb.)
+- [ ] Létrehoztad a `src/utils/clipboard.utils.ts` fájlt
+- [ ] Létrehoztad a `src/constants/app.constants.ts` fájlt
+- [ ] Létrehoztad a `src/composables/usePagination.ts` fájlt
+- [ ] A pagination logic a composable-t használja
+- [ ] (Opcionális) Létrehoztad a `src/composables/useLoading.ts` fájlt
+
+### Tesztelés:
 - [ ] Az alkalmazás hiba nélkül fordul (`npm run build`)
 - [ ] Nincs TypeScript hiba (`npm run type-check` vagy `vue-tsc --noEmit`)
 - [ ] Az alkalmazás tesztelése dev módban (`npm run dev`)
-- [ ] Minden funkció továbbra is működik (dátumok formázása, ikonok megjelenítése, stb.)
+- [ ] Minden funkció továbbra is működik (dátumok formázása, ikonok megjelenítése, badge színek, stb.)
+- [ ] Clipboard másolás működik
+- [ ] Pagination működik
 
 ---
 
